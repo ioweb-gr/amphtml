@@ -933,6 +933,21 @@ TEST(ParseCssTest, SelectorParserRecordsOneParsingError) {
   EXPECT_EQ(1, errors.size());
 }
 
+TEST(ParseCssTest, SelectorParserRejectsTopLevelAmpSelector) {
+  vector<char32_t> css =
+      htmlparser::Strings::Utf8ToCodepoints("&.en_US { background: red; }");
+  vector<unique_ptr<ErrorToken>> errors;
+  vector<unique_ptr<Token>> tokens =
+      Tokenize(&css, /*line=*/1, /*col=*/0, &errors);
+  unique_ptr<Stylesheet> stylesheet =
+      ParseAStylesheet(&tokens, AmpCssParsingConfig(), &errors);
+  EXPECT_EQ(0, errors.size());
+
+  SelectorVisitor visitor(&errors);
+  stylesheet->Accept(&visitor);
+  EXPECT_EQ(JsonFromList(errors), R"([{"tokentype":"ERROR","line":1,"col":0,"code":"CSS_SYNTAX_NOT_A_SELECTOR_START","params":["style"]}])");
+}
+
 class CollectCombinatorNodes : public SelectorVisitor {
  public:
   CollectCombinatorNodes() : SelectorVisitor(&errors_) {}

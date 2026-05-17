@@ -2626,6 +2626,7 @@ ErrorTokenOr<Selector> ParseASelectorsGroup(TokenStream* token_stream) {
 }
 
 void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
+  ++qualified_rule_depth_;
   vector<unique_ptr<Token>> cloned_prelude;
   cloned_prelude.reserve(qualified_rule.prelude().size());
   for (const auto& token : qualified_rule.prelude()) {
@@ -2633,7 +2634,7 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
   }
   TokenStream stream(std::move(cloned_prelude));
   stream.Consume();
-  if (stream.Current().Type() == TokenType::DELIM &&
+  if (qualified_rule_depth_ > 1 && stream.Current().Type() == TokenType::DELIM &&
       stream.Current().StringValue() == "&") {
     stream.Consume();
     if (stream.Current().Type() == TokenType::WHITESPACE) {
@@ -2658,5 +2659,10 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
     node->ForEachChild(
         [&to_visit](const Selector& child) { to_visit.push_back(&child); });
   }
+}
+
+void SelectorVisitor::LeaveQualifiedRule(
+    const QualifiedRule& /*qualified_rule*/) {
+  --qualified_rule_depth_;
 }
 }  // namespace htmlparser::css

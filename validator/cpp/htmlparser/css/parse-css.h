@@ -1008,10 +1008,11 @@ class SelectorVisitor : public RuleVisitor {
   void VisitAtRule(const AtRule& at_rule) final {}
   void LeaveAtRule(const AtRule& at_rule) final {}
   void VisitQualifiedRule(const QualifiedRule& qualified_rule) final;
-  void LeaveQualifiedRule(const QualifiedRule& qualified_rule) final {}
+  void LeaveQualifiedRule(const QualifiedRule& qualified_rule) final;
   void VisitDeclaration(const Declaration& declaration) final {}
   void LeaveDeclaration(const Declaration& declaration) final {}
   std::vector<std::unique_ptr<ErrorToken>>* errors_;
+  int qualified_rule_depth_ = 0;
 };
 }  // namespace htmlparser::css
 
