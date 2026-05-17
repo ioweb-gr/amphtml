@@ -1018,7 +1018,8 @@ class Canonicalizer {
   // top level elements.
   vector<unique_ptr<Rule>> ParseAListOfRules(
       vector<unique_ptr<Token>>* tokens, bool top_level,
-      vector<unique_ptr<ErrorToken>>* errors) {
+      vector<unique_ptr<ErrorToken>>* errors,
+      bool allow_nested_rules_in_declaration_list = true) {
     TokenStream s(std::move(*tokens));
     vector<unique_ptr<Rule>> rules;
     while (true) {
@@ -1030,11 +1031,13 @@ class Canonicalizer {
       } else if (s.Current().Type() == TokenType::CDO ||
                  s.Current().Type() == TokenType::CDC) {
         if (top_level) continue;
-        ParseAQualifiedRule(&s, &rules, errors);
+        ParseAQualifiedRule(&s, &rules, errors,
+                            allow_nested_rules_in_declaration_list);
       } else if (s.Current().Type() == TokenType::AT_KEYWORD) {
         rules.emplace_back(ParseAnAtRule(&s, errors));
       } else {
-        ParseAQualifiedRule(&s, &rules, errors);
+        ParseAQualifiedRule(&s, &rules, errors,
+                            allow_nested_rules_in_declaration_list);
       }
     }
   }
@@ -1061,8 +1064,11 @@ class Canonicalizer {
         vector<unique_ptr<Token>> contents = ExtractASimpleBlock(s, errors);
         switch (BlockTypeFor(*rule)) {
           case BlockType::PARSE_AS_RULES: {
+            bool allow_nested_rules_in_declaration_list =
+                StripVendorPrefix(rule->name()) != "keyframes";
             vector<unique_ptr<Rule>> rules =
-                ParseAListOfRules(&contents, /*top_level=*/false, errors);
+                ParseAListOfRules(&contents, /*top_level=*/false, errors,
+                                  allow_nested_rules_in_declaration_list);
             rule->mutable_rules()->swap(rules);
           } break;
           case BlockType::PARSE_AS_DECLARATIONS: {
@@ -1087,7 +1093,8 @@ class Canonicalizer {
   // or |errors|, respectively. Rule will include a prelude with the CSS
   // selector (if any) and a list of declarations.
   void ParseAQualifiedRule(TokenStream* s, vector<unique_ptr<Rule>>* rules,
-                           vector<unique_ptr<ErrorToken>>* errors) {
+                           vector<unique_ptr<ErrorToken>>* errors,
+                           bool allow_nested_rules_in_declaration_list = true) {
     CHECK(s->Current().Type() != TokenType::EOF_TOKEN) << "EOF_TOKEN";
     CHECK(s->Current().Type() != TokenType::AT_KEYWORD) << "AT_KEYWORD";
 
@@ -1109,7 +1116,10 @@ class Canonicalizer {
         vector<unique_ptr<Token>> simple_block = ExtractASimpleBlock(s, errors);
         vector<unique_ptr<Rule>> nested_rules;
         vector<unique_ptr<Declaration>> declarations =
-            ParseAListOfDeclarations(&simple_block, errors, &nested_rules);
+            ParseAListOfDeclarations(
+                &simple_block, errors,
+                allow_nested_rules_in_declaration_list ? &nested_rules
+                                                       : nullptr);
         rule->mutable_rules()->swap(nested_rules);
         rule->mutable_declarations()->swap(declarations);
         rules->emplace_back(std::move(rule));
@@ -2632,18 +2642,17 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
   for (const auto& token : qualified_rule.prelude()) {
     cloned_prelude.push_back(token->Clone());
   }
-  TokenStream stream(std::move(cloned_prelude));
-  stream.Consume();
-  if (qualified_rule_depth_ > 1 && stream.Current().Type() == TokenType::DELIM &&
-      stream.Current().StringValue() == "&") {
-    stream.Consume();
-    if (stream.Current().Type() == TokenType::WHITESPACE) {
-      stream.Consume();
-    }
-    if (stream.Current().Type() == TokenType::EOF_TOKEN) {
-      return;
+  if (qualified_rule_depth_ > 1) {
+    for (auto& token : cloned_prelude) {
+      if (token->Type() == TokenType::DELIM && token->StringValue() == "&") {
+        auto replacement = make_unique<DelimToken>("*");
+        token->CopyStartPositionTo(replacement.get());
+        token = std::move(replacement);
+      }
     }
   }
+  TokenStream stream(std::move(cloned_prelude));
+  stream.Consume();
   ErrorTokenOr<Selector> maybe_selector = ParseASelectorsGroup(&stream);
   if (absl::holds_alternative<unique_ptr<ErrorToken>>(maybe_selector)) {
     errors_->emplace_back(

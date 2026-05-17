@@ -10,6 +10,7 @@
 
 using std::unique_ptr;
 using testing::ElementsAre;
+using testing::HasSubstr;
 
 namespace htmlparser::css {
 namespace {
@@ -202,6 +203,25 @@ TEST(Amp4AdsParseCssTest, KeyframesExample_Good_AnimationTimingFunction) {
       ParseAStylesheet(&tokens, A4aCssParsingConfig(), &errors);
   ValidateAmp4AdsCss(*stylesheet, &errors);
   EXPECT_EQ(JsonFromList(errors), "[]");
+}
+
+TEST(Amp4AdsParseCssTest, KeyframesExample_Bad_NestedAmpRuleIsRejected) {
+  std::vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
+      "@keyframes slidein { "
+      "  from { opacity: 0; &.x { color: red; } } "
+      "}");
+  std::vector<unique_ptr<ErrorToken>> errors;
+  std::vector<unique_ptr<Token>> tokens =
+      Tokenize(&css, /*line=*/1, /*col=*/0, &errors);
+  unique_ptr<Stylesheet> stylesheet =
+      ParseAStylesheet(&tokens, A4aCssParsingConfig(), &errors);
+  EXPECT_EQ(1, errors.size());
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_DECLARATION\""));
+  ValidateAmp4AdsCss(*stylesheet, &errors);
+  EXPECT_EQ(1, errors.size());
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_DECLARATION\""));
 }
 
 TEST(Amp4AdsParseCssTest,

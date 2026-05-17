@@ -287,6 +287,21 @@ TEST(ParseCssTest, ParseAStylesheet_ParsesAmpNestingSelectors) {
   EXPECT_EQ(0, errors.size());
 }
 
+TEST(ParseCssTest, ParseAStylesheet_ParsesAmpNestingSelectorListsAndCombinators) {
+  vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
+      ".io-flag-img { &.en_US, &.de_DE, & > .label { background: red; } }");
+  vector<unique_ptr<ErrorToken>> errors;
+  vector<unique_ptr<Token>> tokens =
+      Tokenize(&css, /*line=*/1, /*col=*/0, &errors);
+  unique_ptr<Stylesheet> stylesheet =
+      ParseAStylesheet(&tokens, AmpCssParsingConfig(), &errors);
+  EXPECT_EQ(0, errors.size());
+
+  SelectorVisitor selector_visitor(&errors);
+  stylesheet->Accept(&selector_visitor);
+  EXPECT_EQ(0, errors.size());
+}
+
 TEST(ParseCssTest, ParseAStylesheet_HandlesANestedMediaRuleWithDeclarations) {
   vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
       "@media print {\n"
