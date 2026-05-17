@@ -225,6 +225,30 @@ TEST(Amp4AdsParseCssTest, KeyframesExample_Bad_NestedAmpRuleIsRejected) {
 }
 
 TEST(Amp4AdsParseCssTest,
+     KeyframesExample_Bad_NestedAmpRuleInsideMediaIsRejected) {
+  std::vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
+      "@keyframes slidein { "
+      "  @media all { from { opacity: 0; &.x { color: red; } } } "
+      "}");
+  std::vector<unique_ptr<ErrorToken>> errors;
+  std::vector<unique_ptr<Token>> tokens =
+      Tokenize(&css, /*line=*/1, /*col=*/0, &errors);
+  unique_ptr<Stylesheet> stylesheet =
+      ParseAStylesheet(&tokens, A4aCssParsingConfig(), &errors);
+  EXPECT_EQ(2, errors.size());
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_DECLARATION\""));
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_AT_RULE\""));
+  ValidateAmp4AdsCss(*stylesheet, &errors);
+  EXPECT_EQ(2, errors.size());
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_DECLARATION\""));
+  EXPECT_THAT(JsonFromList(errors),
+              HasSubstr("\"code\":\"CSS_SYNTAX_INVALID_AT_RULE\""));
+}
+
+TEST(Amp4AdsParseCssTest,
      KeyframesExample_Bad_OnlyOpacityAndTransformMayBeTransitioned) {
   std::vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
       "@keyframes slidein { "

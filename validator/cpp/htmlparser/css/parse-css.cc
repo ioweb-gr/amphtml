@@ -1034,7 +1034,8 @@ class Canonicalizer {
         ParseAQualifiedRule(&s, &rules, errors,
                             allow_nested_rules_in_declaration_list);
       } else if (s.Current().Type() == TokenType::AT_KEYWORD) {
-        rules.emplace_back(ParseAnAtRule(&s, errors));
+        rules.emplace_back(ParseAnAtRule(&s, errors,
+                                         allow_nested_rules_in_declaration_list));
       } else {
         ParseAQualifiedRule(&s, &rules, errors,
                             allow_nested_rules_in_declaration_list);
@@ -1044,7 +1045,9 @@ class Canonicalizer {
 
   // Parses an At Rule.
   unique_ptr<AtRule> ParseAnAtRule(TokenStream* s,
-                                   vector<unique_ptr<ErrorToken>>* errors) {
+                                   vector<unique_ptr<ErrorToken>>* errors,
+                                   bool allow_nested_rules_in_declaration_list =
+                                       true) {
     CHECK(s->Current().Type() == TokenType::AT_KEYWORD) << "invalid type";
     auto rule = make_unique<AtRule>(s->Current().StringValue());
     s->Current().CopyStartPositionTo(rule.get());
@@ -1064,11 +1067,12 @@ class Canonicalizer {
         vector<unique_ptr<Token>> contents = ExtractASimpleBlock(s, errors);
         switch (BlockTypeFor(*rule)) {
           case BlockType::PARSE_AS_RULES: {
-            bool allow_nested_rules_in_declaration_list =
+            bool allow_nested_rules_in_nested_rule_lists =
+                allow_nested_rules_in_declaration_list &&
                 StripVendorPrefix(rule->name()) != "keyframes";
             vector<unique_ptr<Rule>> rules =
                 ParseAListOfRules(&contents, /*top_level=*/false, errors,
-                                  allow_nested_rules_in_declaration_list);
+                                  allow_nested_rules_in_nested_rule_lists);
             rule->mutable_rules()->swap(rules);
           } break;
           case BlockType::PARSE_AS_DECLARATIONS: {
@@ -1150,7 +1154,8 @@ class Canonicalizer {
         // The CSS3 Parsing spec allows for AT rules inside lists of
         // declarations, but our grammar does not so we deviate a tiny bit here.
         // We consume an AT rule, but drop it and instead push an error token.
-        unique_ptr<AtRule> at_rule = ParseAnAtRule(&s, errors);
+        unique_ptr<AtRule> at_rule =
+            ParseAnAtRule(&s, errors, nested_rules != nullptr);
         errors->emplace_back(CreateParseErrorTokenAt(
             *at_rule, ValidationError::CSS_SYNTAX_INVALID_AT_RULE,
             /*params=*/{"style", at_rule->name()}));
