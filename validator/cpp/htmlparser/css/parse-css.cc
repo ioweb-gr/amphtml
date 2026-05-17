@@ -2645,7 +2645,7 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
   if (qualified_rule_depth_ > 1) {
     for (auto& token : cloned_prelude) {
       if (token->Type() == TokenType::DELIM && token->StringValue() == "&") {
-        auto replacement = make_unique<DelimToken>("*");
+        auto replacement = make_unique<DelimToken>('*');
         token->CopyStartPositionTo(replacement.get());
         token = std::move(replacement);
       }
