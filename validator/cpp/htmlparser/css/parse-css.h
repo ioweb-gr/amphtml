@@ -563,6 +563,10 @@ class QualifiedRule : public Rule {
     return &declarations_;
   }
 
+  std::vector<std::unique_ptr<Rule>>* mutable_rules() { return &rules_; }
+
+  const std::vector<std::unique_ptr<Rule>>& rules() const { return rules_; }
+
   const std::vector<std::unique_ptr<Declaration>>& declarations() const {
     return declarations_;
   }
@@ -571,6 +575,7 @@ class QualifiedRule : public Rule {
 
  private:
   std::vector<std::unique_ptr<Token>> prelude_;
+  std::vector<std::unique_ptr<Rule>> rules_;
   std::vector<std::unique_ptr<Declaration>> declarations_;
 };
 

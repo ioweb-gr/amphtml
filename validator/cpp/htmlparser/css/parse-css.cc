@@ -250,6 +250,9 @@ std::string QualifiedRule::RuleName() const {
 htmlparser::json::JsonDict QualifiedRule::ToJson() const {
   htmlparser::json::JsonDict root = Rule::ToJson();
   AppendValue(&root, "prelude", prelude_);
+  if (!rules_.empty()) {
+    AppendValue(&root, "rules", rules_);
+  }
   AppendValue(&root, "declarations", declarations_);
   return root;
 }
@@ -260,6 +263,7 @@ const vector<unique_ptr<Token>>& QualifiedRule::prelude() const {
 
 void QualifiedRule::Accept(RuleVisitor* visitor) const {
   visitor->VisitQualifiedRule(*this);
+  for (const unique_ptr<Rule>& rule : rules_) rule->Accept(visitor);
   for (const unique_ptr<Declaration>& declaration : declarations_)
     declaration->Accept(visitor);
   visitor->LeaveQualifiedRule(*this);
@@ -1103,8 +1107,10 @@ class Canonicalizer {
         // This consumes declarations (ie: "color: red;" ) inside
         // a qualified rule as that rule's value.
         vector<unique_ptr<Token>> simple_block = ExtractASimpleBlock(s, errors);
+        vector<unique_ptr<Rule>> nested_rules;
         vector<unique_ptr<Declaration>> declarations =
-            ParseAListOfDeclarations(&simple_block, errors);
+            ParseAListOfDeclarations(&simple_block, errors, &nested_rules);
+        rule->mutable_rules()->swap(nested_rules);
         rule->mutable_declarations()->swap(declarations);
         rules->emplace_back(std::move(rule));
         return;
@@ -1119,7 +1125,8 @@ class Canonicalizer {
 
   vector<unique_ptr<Declaration>> ParseAListOfDeclarations(
       vector<unique_ptr<Token>>* tokens,
-      vector<unique_ptr<ErrorToken>>* errors) {
+      vector<unique_ptr<ErrorToken>>* errors,
+      vector<unique_ptr<Rule>>* nested_rules = nullptr) {
     vector<unique_ptr<Declaration>> decls;
     TokenStream s(std::move(*tokens));
     while (true) {
@@ -1139,6 +1146,9 @@ class Canonicalizer {
             /*params=*/{"style", at_rule->name()}));
       } else if (s.Current().Type() == TokenType::IDENT) {
         ParseADeclaration(&s, &decls, errors);
+      } else if (nested_rules != nullptr && s.Current().Type() == TokenType::DELIM &&
+                 s.Current().StringValue() == "&") {
+        ParseAQualifiedRule(&s, nested_rules, errors);
       } else {
         errors->emplace_back(CreateParseErrorTokenAt(
             s.Current(), ValidationError::CSS_SYNTAX_INVALID_DECLARATION,
@@ -2623,6 +2633,16 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
   }
   TokenStream stream(std::move(cloned_prelude));
   stream.Consume();
+  if (stream.Current().Type() == TokenType::DELIM &&
+      stream.Current().StringValue() == "&") {
+    stream.Consume();
+    if (stream.Current().Type() == TokenType::WHITESPACE) {
+      stream.Consume();
+    }
+    if (stream.Current().Type() == TokenType::EOF_TOKEN) {
+      return;
+    }
+  }
   ErrorTokenOr<Selector> maybe_selector = ParseASelectorsGroup(&stream);
   if (absl::holds_alternative<unique_ptr<ErrorToken>>(maybe_selector)) {
     errors_->emplace_back(

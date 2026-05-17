@@ -272,6 +272,21 @@ TEST(ParseCssTest, ParseAStylesheet_GeneratesErrorsBasedOnTheGrammar) {
   EXPECT_EQ(stylesheet->ToJson().ToString(), R"({"tokentype":"STYLESHEET","line":1,"col":0,"rules":[{"tokentype":"AT_RULE","line":1,"col":0,"name":"gregable","prelude":[{"tokentype":"WHITESPACE","line":1,"col":9},{"tokentype":"EOF_TOKEN","line":1,"col":10}],"rules":[],"declarations":[]},{"tokentype":"QUALIFIED_RULE","line":2,"col":0,"prelude":[{"tokentype":"DELIM","line":2,"col":0,"value":"."},{"tokentype":"IDENT","line":2,"col":1,"value":"foo"},{"tokentype":"EOF_TOKEN","line":2,"col":4}],"declarations":[]}],"eof":{"tokentype":"EOF_TOKEN","line":2,"col":10}})");
 }
 
+TEST(ParseCssTest, ParseAStylesheet_ParsesAmpNestingSelectors) {
+  vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
+      ".io-flag-img { &.en_US { background: red; } }");
+  vector<unique_ptr<ErrorToken>> errors;
+  vector<unique_ptr<Token>> tokens =
+      Tokenize(&css, /*line=*/1, /*col=*/0, &errors);
+  unique_ptr<Stylesheet> stylesheet =
+      ParseAStylesheet(&tokens, AmpCssParsingConfig(), &errors);
+  EXPECT_EQ(stylesheet->ToJson().ToString(), R"({"tokentype":"STYLESHEET","line":1,"col":0,"rules":[{"tokentype":"QUALIFIED_RULE","line":1,"col":0,"prelude":[{"tokentype":"DELIM","line":1,"col":0,"value":"."},{"tokentype":"IDENT","line":1,"col":1,"value":"io-flag-img"},{"tokentype":"WHITESPACE","line":1,"col":12},{"tokentype":"EOF_TOKEN","line":1,"col":13}],"rules":[{"tokentype":"QUALIFIED_RULE","line":1,"col":15,"prelude":[{"tokentype":"DELIM","line":1,"col":15,"value":"&"},{"tokentype":"DELIM","line":1,"col":16,"value":"."},{"tokentype":"IDENT","line":1,"col":17,"value":"en_US"},{"tokentype":"WHITESPACE","line":1,"col":22},{"tokentype":"EOF_TOKEN","line":1,"col":23}],"declarations":[{"tokentype":"DECLARATION","line":1,"col":25,"name":"background","important":false,"value":[{"tokentype":"WHITESPACE","line":1,"col":36},{"tokentype":"IDENT","line":1,"col":37,"value":"red"},{"tokentype":"EOF_TOKEN","line":1,"col":40}]}]}],"declarations":[]}],"eof":{"tokentype":"EOF_TOKEN","line":1,"col":44}})");
+
+  SelectorVisitor selector_visitor(&errors);
+  stylesheet->Accept(&selector_visitor);
+  EXPECT_EQ(0, errors.size());
+}
+
 TEST(ParseCssTest, ParseAStylesheet_HandlesANestedMediaRuleWithDeclarations) {
   vector<char32_t> css = htmlparser::Strings::Utf8ToCodepoints(
       "@media print {\n"
