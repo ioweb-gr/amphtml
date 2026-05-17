@@ -250,6 +250,9 @@ std::string QualifiedRule::RuleName() const {
 htmlparser::json::JsonDict QualifiedRule::ToJson() const {
   htmlparser::json::JsonDict root = Rule::ToJson();
   AppendValue(&root, "prelude", prelude_);
+  if (!rules_.empty()) {
+    AppendValue(&root, "rules", rules_);
+  }
   AppendValue(&root, "declarations", declarations_);
   return root;
 }
@@ -260,6 +263,7 @@ const vector<unique_ptr<Token>>& QualifiedRule::prelude() const {
 
 void QualifiedRule::Accept(RuleVisitor* visitor) const {
   visitor->VisitQualifiedRule(*this);
+  for (const unique_ptr<Rule>& rule : rules_) rule->Accept(visitor);
   for (const unique_ptr<Declaration>& declaration : declarations_)
     declaration->Accept(visitor);
   visitor->LeaveQualifiedRule(*this);
@@ -1014,7 +1018,8 @@ class Canonicalizer {
   // top level elements.
   vector<unique_ptr<Rule>> ParseAListOfRules(
       vector<unique_ptr<Token>>* tokens, bool top_level,
-      vector<unique_ptr<ErrorToken>>* errors) {
+      vector<unique_ptr<ErrorToken>>* errors,
+      bool allow_nested_rules_in_declaration_list = true) {
     TokenStream s(std::move(*tokens));
     vector<unique_ptr<Rule>> rules;
     while (true) {
@@ -1026,18 +1031,23 @@ class Canonicalizer {
       } else if (s.Current().Type() == TokenType::CDO ||
                  s.Current().Type() == TokenType::CDC) {
         if (top_level) continue;
-        ParseAQualifiedRule(&s, &rules, errors);
+        ParseAQualifiedRule(&s, &rules, errors,
+                            allow_nested_rules_in_declaration_list);
       } else if (s.Current().Type() == TokenType::AT_KEYWORD) {
-        rules.emplace_back(ParseAnAtRule(&s, errors));
+        rules.emplace_back(ParseAnAtRule(&s, errors,
+                                         allow_nested_rules_in_declaration_list));
       } else {
-        ParseAQualifiedRule(&s, &rules, errors);
+        ParseAQualifiedRule(&s, &rules, errors,
+                            allow_nested_rules_in_declaration_list);
       }
     }
   }
 
   // Parses an At Rule.
   unique_ptr<AtRule> ParseAnAtRule(TokenStream* s,
-                                   vector<unique_ptr<ErrorToken>>* errors) {
+                                   vector<unique_ptr<ErrorToken>>* errors,
+                                   bool allow_nested_rules_in_declaration_list =
+                                       true) {
     CHECK(s->Current().Type() == TokenType::AT_KEYWORD) << "invalid type";
     auto rule = make_unique<AtRule>(s->Current().StringValue());
     s->Current().CopyStartPositionTo(rule.get());
@@ -1057,8 +1067,12 @@ class Canonicalizer {
         vector<unique_ptr<Token>> contents = ExtractASimpleBlock(s, errors);
         switch (BlockTypeFor(*rule)) {
           case BlockType::PARSE_AS_RULES: {
+            bool allow_nested_rules_in_nested_rule_lists =
+                allow_nested_rules_in_declaration_list &&
+                StripVendorPrefix(rule->name()) != "keyframes";
             vector<unique_ptr<Rule>> rules =
-                ParseAListOfRules(&contents, /*top_level=*/false, errors);
+                ParseAListOfRules(&contents, /*top_level=*/false, errors,
+                                  allow_nested_rules_in_nested_rule_lists);
             rule->mutable_rules()->swap(rules);
           } break;
           case BlockType::PARSE_AS_DECLARATIONS: {
@@ -1083,7 +1097,8 @@ class Canonicalizer {
   // or |errors|, respectively. Rule will include a prelude with the CSS
   // selector (if any) and a list of declarations.
   void ParseAQualifiedRule(TokenStream* s, vector<unique_ptr<Rule>>* rules,
-                           vector<unique_ptr<ErrorToken>>* errors) {
+                           vector<unique_ptr<ErrorToken>>* errors,
+                           bool allow_nested_rules_in_declaration_list = true) {
     CHECK(s->Current().Type() != TokenType::EOF_TOKEN) << "EOF_TOKEN";
     CHECK(s->Current().Type() != TokenType::AT_KEYWORD) << "AT_KEYWORD";
 
@@ -1103,8 +1118,13 @@ class Canonicalizer {
         // This consumes declarations (ie: "color: red;" ) inside
         // a qualified rule as that rule's value.
         vector<unique_ptr<Token>> simple_block = ExtractASimpleBlock(s, errors);
+        vector<unique_ptr<Rule>> nested_rules;
         vector<unique_ptr<Declaration>> declarations =
-            ParseAListOfDeclarations(&simple_block, errors);
+            ParseAListOfDeclarations(
+                &simple_block, errors,
+                allow_nested_rules_in_declaration_list ? &nested_rules
+                                                       : nullptr);
+        rule->mutable_rules()->swap(nested_rules);
         rule->mutable_declarations()->swap(declarations);
         rules->emplace_back(std::move(rule));
         return;
@@ -1119,7 +1139,8 @@ class Canonicalizer {
 
   vector<unique_ptr<Declaration>> ParseAListOfDeclarations(
       vector<unique_ptr<Token>>* tokens,
-      vector<unique_ptr<ErrorToken>>* errors) {
+      vector<unique_ptr<ErrorToken>>* errors,
+      vector<unique_ptr<Rule>>* nested_rules = nullptr) {
     vector<unique_ptr<Declaration>> decls;
     TokenStream s(std::move(*tokens));
     while (true) {
@@ -1133,12 +1154,16 @@ class Canonicalizer {
         // The CSS3 Parsing spec allows for AT rules inside lists of
         // declarations, but our grammar does not so we deviate a tiny bit here.
         // We consume an AT rule, but drop it and instead push an error token.
-        unique_ptr<AtRule> at_rule = ParseAnAtRule(&s, errors);
+        unique_ptr<AtRule> at_rule =
+            ParseAnAtRule(&s, errors, nested_rules != nullptr);
         errors->emplace_back(CreateParseErrorTokenAt(
             *at_rule, ValidationError::CSS_SYNTAX_INVALID_AT_RULE,
             /*params=*/{"style", at_rule->name()}));
       } else if (s.Current().Type() == TokenType::IDENT) {
         ParseADeclaration(&s, &decls, errors);
+      } else if (nested_rules != nullptr && s.Current().Type() == TokenType::DELIM &&
+                 s.Current().StringValue() == "&") {
+        ParseAQualifiedRule(&s, nested_rules, errors);
       } else {
         errors->emplace_back(CreateParseErrorTokenAt(
             s.Current(), ValidationError::CSS_SYNTAX_INVALID_DECLARATION,
@@ -2616,10 +2641,20 @@ ErrorTokenOr<Selector> ParseASelectorsGroup(TokenStream* token_stream) {
 }
 
 void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
+  ++qualified_rule_depth_;
   vector<unique_ptr<Token>> cloned_prelude;
   cloned_prelude.reserve(qualified_rule.prelude().size());
   for (const auto& token : qualified_rule.prelude()) {
     cloned_prelude.push_back(token->Clone());
+  }
+  if (qualified_rule_depth_ > 1) {
+    for (auto& token : cloned_prelude) {
+      if (token->Type() == TokenType::DELIM && token->StringValue() == "&") {
+        auto replacement = make_unique<DelimToken>('*');
+        token->CopyStartPositionTo(replacement.get());
+        token = std::move(replacement);
+      }
+    }
   }
   TokenStream stream(std::move(cloned_prelude));
   stream.Consume();
@@ -2638,5 +2673,10 @@ void SelectorVisitor::VisitQualifiedRule(const QualifiedRule& qualified_rule) {
     node->ForEachChild(
         [&to_visit](const Selector& child) { to_visit.push_back(&child); });
   }
+}
+
+void SelectorVisitor::LeaveQualifiedRule(
+    const QualifiedRule& /*qualified_rule*/) {
+  --qualified_rule_depth_;
 }
 }  // namespace htmlparser::css
